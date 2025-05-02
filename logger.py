@@ -13,8 +13,11 @@ class GameLogger:
                     "Mines Flagged", "Hidden Cells", "Safe", "Game Outcome"
                 ])
 
+    '''
+    Function: LOG_MOVE()
+    Description: Logs a move during the game
+    '''
     def log_move(self, game_id, move_number, row, col, action, board_state, mines_flagged, hidden_cells, safe, game_outcome):
-        """Logs a move during the game."""
         with open(self.file_name, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([
@@ -22,8 +25,11 @@ class GameLogger:
                 mines_flagged, hidden_cells, safe, game_outcome
             ])
 
+    '''
+    Function: LOG_GAME_END()
+    Description: Logs the outcome of a finished game.
+    '''
     def log_game_end(self, game_id, outcome):
-        """Logs the outcome of a finished game."""
         with open(self.file_name, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([game_id, "End", "", "", "", "", "", "", "", outcome])

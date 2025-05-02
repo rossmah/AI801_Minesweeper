@@ -8,43 +8,28 @@ df = pd.read_csv("game_data.csv")
 # -------------------------------
 # 1. Data Snapshot & Descriptions
 # -------------------------------
-print("\n--- Dataset Info ---")
-print(df.info())
-print("\n--- First 5 Rows ---")
-print(df.head())
-print("\n--- Summary Statistics ---")
-print(df.describe(include='all'))
-
 print("\n---Column Names ---")
 # Manually assigning column names based on what you expect them to be
 df.columns = ['Game ID', 'Move Number', 'Row', 'Col', 'Action', 'Board State', 
               'Mines Flagged', 'Hidden Cells', 'Safe', 'Game Outcome']
-
-print(df.columns)
 df.columns = df.columns.str.strip()  # Remove any leading/trailing spaces from column names
-
+print(df.columns)
 
 # -------------------------------
 # 2. Preprocessing & Cleaning
 # -------------------------------
-# Handle missing data by filling it
-# Filling missing numerical values with the median
-df['Row'].fillna(df['Row'].median(), inplace=True)
-df['Col'].fillna(df['Col'].median(), inplace=True)
-df['Mines Flagged'].fillna(df['Mines Flagged'].median(), inplace=True)
-df['Hidden Cells'].fillna(df['Hidden Cells'].median(), inplace=True)
+# Handle missing numerical data by filling it with the median
+df['Row'].fillna(df['Row'].median())
+df['Col'].fillna(df['Col'].median())
+df['Mines Flagged'].fillna(df['Mines Flagged'].median())
+df['Hidden Cells'].fillna(df['Hidden Cells'].median())
 
 # Filling missing categorical values with the mode
-df['Action'].fillna(df['Action'].mode()[0], inplace=True)
-df['Board State'].fillna(df['Board State'].mode()[0], inplace=True)
-df['Safe'].fillna(df['Safe'].mode()[0], inplace=True)
+df['Action'].fillna(df['Action'].mode()[0])
+df['Board State'].fillna(df['Board State'].mode()[0])
 
 # Filter out ongoing games
 df_filtered = df[df['Game Outcome'] != 'Ongoing']
-
-# Check for missing values
-#print("\n--- Missing Values ---")
-#print(df.isnull().sum())
 
 # Convert 'safe' and 'outcome' to categorical
 df['Safe'] = df['Safe'].astype('category')
@@ -61,15 +46,11 @@ df['board_state_length'] = df['Board State'].apply(len)
 df['board_state_length'] = df['Board State'].apply(len)
 
 # Drop board_state if not analyzing as text
-df.drop(columns=['Board State'], inplace=True)
-
-
-
+df.drop(columns=['Board State'])
 
 # -------------------------------
 # 3. Visualizations
 # -------------------------------
-
 # Histograms for numeric features
 df.hist(figsize=(12, 8))
 plt.suptitle("Distributions of Numeric Features")
@@ -80,7 +61,6 @@ plt.show()
 sns.countplot(x='Game Outcome', data=df_filtered)
 plt.title("Game Outcomes")
 plt.show()
-
 
 # Safe vs Mines Flagged
 sns.boxplot(x='Safe', y='Mines Flagged', data=df)

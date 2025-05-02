@@ -1,42 +1,52 @@
 import pandas as pd
-import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
 
-# Load the game log CSV
-df = pd.read_csv('game_log.csv')
+def load_and_preprocess_data():
+    # Load the game log CSV
+    df = pd.read_csv('game_data.csv')
 
-# --- Data Overview ---
-# Assume columns like:
-# ['game_id', 'move_number', 'row', 'col', 'adjacent_mines', 'hidden_neighbors', 
-#  'flagged_neighbors', 'revealed_neighbors', 'label']
+    # Drop any rows with missing data
+    df = df.dropna()
 
-# Drop any rows with missing data
-df.dropna(inplace=True)
+    # Feature selection
+    features = ['Row', 'Col', 'Mines Flagged', 'Hidden Cells', 'Move Number']
 
-# Convert categorical data (e.g., 'row', 'col') if necessary
-# We'll treat 'row' and 'col' as numeric or one-hot, depending on model
-# Option 1: Normalize row/col
-df['row'] = df['row'] / df['row'].max()
-df['col'] = df['col'] / df['col'].max()
+    # Convert 'Safe' to binary labels (0 = mine, 1 = safe)
+    df['Safe'] = df['Safe'].astype(int)
 
-# Option 2 (alternative): One-hot encode row and col if desired
-# encoder = OneHotEncoder(sparse_output=False)
-# encoded = encoder.fit_transform(df[['row', 'col']])
-# encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(['row', 'col']))
-# df = pd.concat([df.drop(['row', 'col'], axis=1), encoded_df], axis=1)
+    x_raw = df[features]
+    y = df['Safe']
 
-# Select feature columns
-feature_cols = ['row', 'col', 'adjacent_mines', 'hidden_neighbors',
-                'flagged_neighbors', 'revealed_neighbors']
+    # Normalize features
+    scaler = StandardScaler()
+    x_scaled = scaler.fit_transform(x_raw)
 
-X = df[feature_cols]
-y = df['label']
+    # Split into train/test 
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_scaled, y, test_size=0.2, random_state=42
+    )
 
-# Train/test split for training the model
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+    print("Training data shape:", x_train.shape)
+    print("Test data shape:", x_test.shape)
 
-print("Training data shape:", X_train.shape)
-print("Test data shape:", X_test.shape)
+    # 1. Check label distribution
+    print("Column Names:")
+    print(df.columns)
+
+    print("Label distribution (Safe):")
+    print(df['Safe'].value_counts(normalize=True))
+
+    # 2. Check correlation of numeric features with 'Safe'
+    numeric_cols = ['Row', 'Col', 'Mines Flagged', 'Hidden Cells', 'Move Number']
+    if 'Move Number' in df.columns:
+        df['Move Number'] = pd.to_numeric(df['Move Number'], errors='coerce')
+        numeric_cols.append('Move Number')
+
+    correlations = df[numeric_cols + ['Safe']].corr()
+
+    # 3. Check for leakage from 'Action' and 'Game Outcome'
+    print("\nSample values for Action and Game Outcome:")
+    print(df[['Action', 'Game Outcome']].drop_duplicates().head())
+
+    return x_train, x_test, y_train, y_test, scaler

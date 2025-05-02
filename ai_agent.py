@@ -1,43 +1,86 @@
 import random
+import pickle
+import os
+import joblib
 from collections import defaultdict
 from minesweeper import Minesweeper
 from logger import GameLogger
-import pickle
-import os
+from sklearn.preprocessing import StandardScaler
 
 class AIAgent:
-    def __init__(self, game, logger=None): 
+    """
+    Function: __init__
+    Description: Initializes the AI agent with a Minesweeper game instance and optional logger.
+    Loads the ML model and sets up internal state for tracking moves and flags.
+    """
+    def __init__(self, game, logger:GameLogger=None): 
         self.game = game
         self.size = game.size
+        self.height = game.size
+        self.width = game.size
+        self.mines = getattr(game, 'mine_positions', set())
         self.moves_made = set()
         self.flags = set()
         self.logger = logger if logger else GameLogger() 
+        self.scaler = StandardScaler()
         self.model = None
+        self.load_model()
 
-        model_path = 'models/minesweeper_model.pkl'
-        if os.path.exists(model_path):
-            self.model = joblib.load(model_path)
-        else:
-            print("Warning: Trained model not found. ML-based prediction will be disabled.")
-
-    def load_model(filename="minesweeper_model.pkl"):
-        """Load the trained model from a file."""
+    """
+    Function: LOAD_MODEL()
+    Description: Attempts to load a previously trained ML model and scaler from disk.
+    If unavailable, sets them to None.
+    """
+    def load_model(self):
         try:
-            with open(filename, 'rb') as file:
-                model = pickle.load(file)
-            print(f"Model loaded from {filename}")
-            return model
-        except FileNotFoundError:
-            print(f"Model file {filename} not found. Proceeding with untrained model.")
-            return None  # Return None or a default model if not found
+            # Try loading the model and scaler
+            self.model = joblib.load('model.pkl')
+            self.scaler = joblib.load('scaler.pkl')
+           # self.scaler.fit(data)  # Fit the scaler with training data
+        except:
+            # If not found, set them to None
+            self.model = None
+            self.scaler = None
+    
+    """
+    Function: PREPARE_DATA()
+    Description: Reads game data from a CSV file and prepares it for model training.
+    Returns extracted features for learning.
+    """
+    def prepare_data(self):
+        # Read the game data from CSV
+        game_data = pd.read_csv(self.game_data_file)
+        features = prepare_data(game_data)
+        return features
 
-    def get_neighbors(self, row, col):
-        directions = [(-1, -1), (-1, 0), (-1, 1),
-                      (0, -1),         (0, 1),
-                      (1, -1), (1, 0), (1, 1)]
-        return [(row + dr, col + dc) for dr, dc in directions
-                if 0 <= row + dr < self.size and 0 <= col + dc < self.size]
+    """
+    Function: RETRAIN_MODEL()
+    Description: Retrains the ML model using newly prepared data.
+    Initializes model and scaler if not previously loaded.
+    Saves the updated model and scaler to disk.
+    """
+    def retrain_model(self):
+        # Prepare the data
+        features = self.prepare_data()
+        
+        # If no model or scaler exists, initialize them
+        if self.model is None or self.scaler is None:
+            self.scaler = StandardScaler()
+            self.model = train_model(features, self.scaler)
+        
+        # Otherwise, just retrain the model
+        else:
+            self.model = train_model(features, self.scaler)
+        
+        # Save the model and scaler for future use
+        joblib.dump(self.model, 'model.pkl')
+        joblib.dump(self.scaler, 'scaler.pkl')
 
+    """
+    Function: APPLY_HEURISTICS()
+    Description: Applies basic Minesweeper heuristics to identify safe moves and likely mines.
+    Returns two sets: one of safe moves and one of suspected mine locations.
+    """
     def apply_heuristics(self):
         safe_moves = set()
         mine_guesses = set()
@@ -47,7 +90,7 @@ class AIAgent:
                 cell = self.game.visible_board[r][c]
                 if cell.startswith("(") and cell.endswith(")"):
                     number = int(cell.strip("()"))
-                    neighbors = self.get_neighbors(r, c)
+                    neighbors = self.game.get_neighbors(r, c)
                     hidden = [n for n in neighbors if self.game.visible_board[n[0]][n[1]] == '-']
                     flagged = [n for n in neighbors if self.game.visible_board[n[0]][n[1]] == 'F']
 
@@ -58,6 +101,11 @@ class AIAgent:
 
         return safe_moves, mine_guesses
 
+    """
+    Function: MONTE_CARLO_GUESS
+    Description: Performs a simple Monte Carlo simulation to estimate likely mine positions.
+    Returns the cell with the lowest simulated mine probability not yet played.
+    """
     def monte_carlo_guess(self, trials=100):
         counts = defaultdict(int)
 
@@ -79,13 +127,13 @@ class AIAgent:
                 return cell
         return None
 
+    '''
+    Function: MINIMUM_RISK_GUESS()
+    Definition: This function is used when no safe moves or obvious mines can be found using heuristics.
+    It estimates the risk for each unknown cell based on nearby revealed numbers and selects
+    the cell with the lowest probability of being a mine.
+    '''
     def minimum_risk_guess(self):
-        '''
-        This function is used when no safe moves or obvious mines can be found using heuristics.
-        It estimates the risk for each unknown cell based on nearby revealed numbers and selects
-        the cell with the lowest probability of being a mine.
-        '''
-
         risk_map = {}
         
         for r in range(self.size):
@@ -95,7 +143,7 @@ class AIAgent:
                 # Only consider revealed number cells
                 if cell.startswith("(") and cell.endswith(")"):
                     number = int(cell.strip("()"))
-                    neighbors = self.get_neighbors(r, c)
+                    neighbors = self.game.get_neighbors(r, c)
                     
                     # Count hidden and flagged neighbors
                     hidden = [n for n in neighbors if self.game.visible_board[n[0]][n[1]] == '-']
@@ -126,108 +174,122 @@ class AIAgent:
                 if (r, c) not in self.moves_made and self.game.visible_board[r][c] == '-':
                     return (r, c)
 
+    """
+    Function: PREDICT_WITH_MODEL()
+    Definition: Use the trained model to predict the safest move among all unrevealed cells.
+    Returns the (row, col) of the best predicted move, or None if not enough data.
+    """
     def predict_with_model(self):
-        """
-        Use the trained model to predict the safest move among all unrevealed cells.
-        Returns the (row, col) of the best predicted move, or None if not enough data.
-        """
+        if not self.model or not self.scaler:
+            raise ValueError("Model or scaler is not loaded.")
+
         candidate_moves = []
+        #self.scaler.fit(data)  # Fit the scaler with training data
 
-        for r in range(self.height):
-            for c in range(self.width):
-                if (r, c) in self.moves_made or (r, c) in self.flags:
-                    continue
+        try: 
+            for r in range(self.height):
+                for c in range(self.width):
+                    if (r, c) in self.moves_made or (r, c) in self.flags:
+                        continue
 
-                adjacent = self.count_adjacent_flags(r, c)
-                is_revealed = int((r, c) in self.moves_made)
-                is_flagged = int((r, c) in self.flags)
-                is_mine = int((r, c) in self.mines)  # Optional; could default to 0
-                norm_row = r / self.height
-                norm_col = c / self.width
+                    # Basic features
+                    mines_flagged = self.game.count_flags_nearby(r, c)
+                    hidden_cells_count = sum(1 for cell in self.game.get_neighbors(r, c) if cell == '-')
 
-                features = [[adjacent, is_revealed, is_flagged, is_mine, norm_row, norm_col]]
-                prediction = self.model.predict_proba(features)[0][0]  # Probability of being safe
-                candidate_moves.append(((r, c), prediction))
+                    features = [[r, c, mines_flagged, hidden_cells_count]]
+                    features_scaled = self.scaler.transform(features)
 
-        if candidate_moves:
-            # Sort by highest predicted safety
-            candidate_moves.sort(key=lambda x: x[1], reverse=True)
-            return candidate_moves[0][0]
-        return None
+                    prob_safe = self.model.predict_proba(features_scaled)[0][1]
 
+                    candidate_moves.append(((r, c), prob_safe))
+
+            if candidate_moves:
+                best_move = max(candidate_moves, key=lambda x: x[1])[0]
+                return best_move
+        except Exception as e:
+            print(f"Prediction failed: {e}")
+            return None
     
-    def get_next_move(self):
-        """
-        Decide the next move using heuristics, minimum-risk analysis, or a trained ML model.
+    """
+    Functions: GET_NEXT_MOVE()
+    Description: Decide the next move using heuristics, minimum-risk analysis, or a trained ML model.
         Priority: 
         1. Obvious safe moves (heuristics)
         2. Obvious mines to flag (heuristics)
         3. Minimum-risk guess
         4. Model-based prediction (learned from historical data)
         5. Random fallback
-        """
-        safe_moves, mine_guesses = self.apply_heuristics()
-
+    """
+    def get_next_move(self):
         # Logging game state
         game_id = id(self.game)
         move_number = len(self.moves_made) + 1
         mines_flagged = len(self.flags)
         hidden_cells = sum(row.count('-') for row in self.game.visible_board)
         board_state = str(self.game.visible_board)
-        safe = False
-       #safe = move_number == 1  # First move is always safe
+        safe = True
 
-        if move_number == 1:  # First move should be safe
-            self.moves_made.add((0, 0))  # Make sure to mark (0,0) as the first move
-            self.logger.log_move(game_id, move_number, 0, 0, 'r', board_state, mines_flagged, hidden_cells, True, "Ongoing")
-            return ('r', 0, 0)  # Force the first move to be (0,0)
+        # Retrieve safe moves and mine guesses from heuristics
+        safe_moves, mine_guesses = self.apply_heuristics()
 
-
-        # Step 1: Obvious safe moves
+        # Step 1: Obvious safe moves (Heuristics)
         for move in safe_moves:
             if move not in self.moves_made:
+                # Reveal the move
+                alive = self.game.reveal_cell(move[0], move[1])
+                if not alive:
+                    safe = False  
                 self.logger.log_move(game_id, move_number, move[0], move[1], 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
                 return ('r', *move)
 
-        # Step 2: Flag obvious mines
+        
+        # Step 2: Flag obvious mines (Heuristics)
         for move in mine_guesses:
             if move not in self.flags:
                 self.flags.add(move)
+                safe = True
                 self.logger.log_move(game_id, move_number, move[0], move[1], 'f', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
                 return ('f', *move)
 
-        
-
-        # Step 4: Use trained ML model to suggest next move
-        if self.model:
+        # Step 3: Use trained ML model to suggest next move
+        if self.model and self.scaler:
+            print("TRYING TO PREDICT WITH MODEL")
             prediction = self.predict_with_model()
             if prediction:
+                safe = True
                 row, col = prediction
                 self.logger.log_move(game_id, move_number, row, col, 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
                 return ('r', row, col)
-            '''   features = self.extract_features_for_model()
-            predicted_move = self.model.predict([features])[0]  # Assumes model is sklearn-like
-            if predicted_move and self.is_valid_guess(predicted_move):
-                row, col = predicted_move
-                self.logger.log_move(game_id, move_number, row, col, 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
-                return ('r', row, col)'''
-
-        # Step 3: Try minimum-risk guess
+        
+        # Step 4: Try minimum-risk guess
         guess = self.minimum_risk_guess()
         if guess:
+            safe = True
             self.logger.log_move(game_id, move_number, guess[0], guess[1], 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
             return ('r', *guess)
-
-        # Step 5: Fallback to random guess
+        
+        # Step 5. If model doesn't predict, use Monte Carlo guess
+        guess = self.monte_carlo_guess()
+        if guess:
+            safe = True
+            self.logger.log_move(game_id, move_number, guess[0], guess[1], 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
+            return ('r', *guess)
+        
+        # Step 6: Fallback to random guess
         while True:
             row, col = random.randint(0, self.size - 1), random.randint(0, self.size - 1)
             if (row, col) not in self.moves_made and self.game.visible_board[row][col] == '-':
+                safe = True
                 self.logger.log_move(game_id, move_number, row, col, 'r', board_state, mines_flagged, hidden_cells, safe, "Ongoing")
                 return ('r', row, col)
-
-     
-
-
+        
+    """
+    Function: PLAY()
+    Description: Run the game loop for the AI agent until the game ends.
+    The agent continually chooses the next move using its strategy (heuristics, ML model,
+    or probabilistic guessing) and performs the move on the Minesweeper board.
+    Game state is updated after each move, and the loop exits when the game is won or lost.
+    """
     def play(self):
         print("AI is playing Minesweeper...\n")
         self.game.display_board()
@@ -258,8 +320,14 @@ class AIAgent:
 
             self.game.display_board()
 
-# Run the AI
+    """
+    Function: __main__
+    Description: Entry point for running the Minesweeper AI agent.
+    Initializes the game and AI agent, then starts the game loop by calling play().
+    Used for standalone execution of the AI agent to play a full game.
+    """
 if __name__ == "__main__":
-    game = Minesweeper(size=5, mines=5)
+    # Run the AI
+    game = Minesweeper(size=8, mines=10)
     ai = AIAgent(game)
     ai.play()
